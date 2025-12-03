@@ -238,3 +238,140 @@ boot_results |>
   )
 ```
 
+## Problem 3
+
+Load and clean data.
+
+```{r}
+set.seed(2)
+
+birthweight =
+  read_csv("data/birthweight.csv") |> view()
+
+# Check for NAs
+birthweight |>
+  summarise(across(everything(), ~ sum(is.na(.))))
+
+# Convert numeric to factor
+birth_df = 
+  birthweight |>
+  mutate(
+    babysex = factor(babysex, levels = c(1, 2),
+                     labels = c("Male", "Female")),
+    frace   = factor(frace,
+                     levels = c(1, 2, 3, 4, 8, 9),
+                     labels = c("White", "Black", "Asian",
+                                "PuertoRican", "Other", "Unknown")),
+    malform = factor(malform, levels = c(0, 1),
+                     labels = c("Absent", "Present")),
+    mrace   = factor(mrace,
+                     levels = c(1, 2, 3, 4, 8),
+                     labels = c("White", "Black", "Asian",
+                                "PuertoRican", "Other"))
+  )
+```
+
+Regression model for birthweight.
+
+```{r}
+bw_model = 
+  lm(
+    bwt ~ gaweeks + blength + bhead + 
+      babysex + mrace + momage + 
+      ppbmi + smoken + wtgain + parity, 
+    data = birth_df
+  )
+
+summary(bw_model)
+```
+
+Plot of model.
+
+```{r}
+res_fit_plot =
+  birth_df |>
+  add_predictions(bw_model) |>
+  add_residuals(bw_model) |>
+  ggplot(aes(x = pred, y = resid)) +
+  geom_point(alpha = 0.3) +
+  labs(
+    x = "Fitted values",
+    y = "Residuals",
+    title = "Residuals vs fitted values for birthweight model"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+res_fit_plot
+```
+
+```{r}
+ggsave("figs/problem3.jpg", res_fit_plot, width = 5.5)
+```
+
+Description of modeling process:
+
+I selected predictors for birthweight based on known clinical factors that influence fetal growth. Variables reflecting the baby’s size (length, head circumference), gestational age, maternal characteristics (age, BMI, weight gain, parity), smoking during pregnancy, and basic demographics (sex, mother’s race) were included because they have clear biological or empirical links to birthweight. I fit a linear regression using these predictors and then assessed model assumptions by plotting residuals versus fitted values using add_predictions() and add_residuals(), confirming that residuals were approximately centered with no major patterns.
+
+Compare my model to two others.
+
+```{r}
+# Define the three functions
+model_mine <- function(df) lm(
+  bwt ~ gaweeks + blength + bhead +
+    babysex + mrace +
+    momage + ppbmi + smoken + wtgain + parity,
+  data = df
+)
+
+model_len_gaw <- function(df) lm(
+  bwt ~ blength + gaweeks,
+  data = df
+)
+
+model_head_len_sex <- function(df) lm(
+  bwt ~ bhead * blength * babysex,
+  data = df
+)
+
+# RMSE function
+rmse <- function(model, data) {
+  preds <- predict(model, newdata = data)
+  sqrt(mean((data$bwt - preds)^2))
+}
+```
+
+Cross-validation prediction error
+
+```{r}
+set.seed(3)
+
+cv_df =
+  crossv_mc(birth_df, n = 100, test = 0.2)
+
+cv_results =
+  cv_df |>
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test,  as_tibble),
+    
+    fit_mine = map(train, model_mine),
+    fit_len_gaw = map(train, model_len_gaw),
+    fit_head_len_sex = map(train, model_head_len_sex),
+    
+    rmse_mine = map2_dbl(fit_mine, test, rmse),
+    rmse_len_gaw = map2_dbl(fit_len_gaw, test, rmse),
+    rmse_head_len_sex = map2_dbl(fit_head_len_sex, test, rmse)
+  )
+```
+
+```{r}
+ cv_results |>
+  summarise(
+    mean_rmse_mine         = mean(rmse_mine),
+    mean_rmse_len_gaw      = mean(rmse_len_gaw),
+    mean_rmse_head_len_sex = mean(rmse_head_len_sex)
+  )
+```
+
+Using cross-validation, the proposed multivariable model had the lowest mean RMSE, indicating better out-of-sample prediction of birthweight than the simpler length + gestational age model and the three-way interaction model. The interaction model tended to have larger and more variable RMSE, likely reflecting overfitting due to its greater complexity.
